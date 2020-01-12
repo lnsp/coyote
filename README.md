@@ -8,10 +8,10 @@ There are three types of actors in a functioning `ftp2p` environment. First of a
 
 ## What does (not) work yet?
 
-- [x] Simple file sharing using tavern, fetcher and seeder
-- [ ] Announcement timeouts
-- [ ] Better chunk download scheduling
-- [ ] Encryption of tavern traffic using Let's Encrypt certificates
-- [ ] Use distributed hash tables for decentralized peer discovery
-- [ ] Split `.tracker` into public- and private trackers, allowing for file encryption
-- [ ] Add tests for fetcher, seeder, tavern and tracker
+* [x] Simple file sharing using tavern, fetcher and seeder
+* [ ] Announcement timeouts
+* [ ] Better chunk download scheduling
+* [ ] Encryption of tavern traffic using Let's Encrypt certificates
+* [ ] Use distributed hash tables for decentralized peer discovery
+* [ ] Split `.tracker` into public- and private trackers, allowing for file encryption
+* [ ] Add tests for fetcher, seeder, tavern and tracker
