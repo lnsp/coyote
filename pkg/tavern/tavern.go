@@ -170,9 +170,9 @@ func (tavern *Tavern) ListenAndServe(addr string) error {
 	return nil
 }
 
-func New() *Tavern {
+func New(interval int64) *Tavern {
 	return &Tavern{
-		AnnounceInterval: 300,
+		AnnounceInterval: interval,
 		index:            newPeerIndex(),
 	}
 }
