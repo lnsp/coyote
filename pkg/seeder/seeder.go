@@ -195,11 +195,18 @@ func (seeder *Seeder) Announce(tracker *tracker.Tracker) (int64, error) {
 func (seeder *Seeder) Seed(path string, tracker *tracker.Tracker) error {
 	log.Printf("Add tracker %s for %s", hex.EncodeToString(tracker.Hash), path)
 	seeder.index.Add(path, tracker)
-	// Announce to tavern
-	_, err := seeder.Announce(tracker)
-	if err != nil {
-		return fmt.Errorf("seeder announce tracker: %v", err)
-	}
+	go func() {
+		// Announce to tavern
+		for {
+			interval, err := seeder.Announce(tracker)
+			if err != nil {
+				log.Printf("Announce to tavern: %v", err)
+				time.Sleep(time.Minute)
+			} else {
+				time.Sleep(time.Duration(interval) * time.Second)
+			}
+		}
+	}()
 	return nil
 }
 
