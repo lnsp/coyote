@@ -4,7 +4,7 @@ Simple peer-to-peer file transfer protocol inspired by the BitTorrent protocol, 
 
 ## How does it work?
 
-There are three types of actors in a functioning `ftp2p` environment. First of all, there are the **taverns**. These are rendevouz servers, which introduce network peers to each other. The first type of peer is the **seeder**. They provide their bandwidth and storage for others to use and download file chunks from. Then there is the **fetcher**. Its sole purpose is to contact **taverns**, ask around for peers for a given file hash and contact these **peers**, fetching file chunks and assembling the final file at the end.
+There are three types of actors in a functioning `ftp2p` environment. First of all, there are the **taverns**. These are rendevouz servers, which introduce network peers to each other. The first type of peer is the **seeder**. They provide their bandwidth and storage for others to use and download file chunks from. Then there is the **fetcher**. Its sole purpose is to contact **taverns**, ask around for peers for a given file hash and contact these **seeders**, fetching file chunks and assembling the final file at the end.
 
 ## What does (not) work yet?
 
