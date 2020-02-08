@@ -22,6 +22,8 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
+	"math/rand"
 	"os"
 	"time"
 
@@ -33,7 +35,8 @@ import (
 	"google.golang.org/grpc"
 )
 
-func listPeers(hash []byte, addr string) ([]Peer, error) {
+// ListPeers contacts a tracker looking for a given hash.
+func ListPeers(hash []byte, addr string) ([]Peer, error) {
 	// Contact tracker for peers
 	tavernConn, err := grpc.Dial(addr, grpc.WithInsecure(), grpc.WithTimeout(time.Minute), grpc.WithBackoffMaxDelay(time.Minute))
 	if err != nil {
@@ -53,12 +56,14 @@ func listPeers(hash []byte, addr string) ([]Peer, error) {
 	for i := range resp.Peers {
 		peers[i] = Peer{
 			Address: resp.Peers[i].Addr,
+			Hash:    hash,
 		}
 	}
 	return peers, nil
 }
 
-func hasChunks(hash []byte, peer string) (*bitset.BitSet, error) {
+// HasChunks fetches the set of chunks served by the peer.
+func HasChunks(hash []byte, peer string) (*bitset.BitSet, error) {
 	peerConn, err := grpc.Dial(peer, grpc.WithInsecure(), grpc.WithTimeout(time.Minute), grpc.WithBackoffMaxDelay(time.Minute))
 	if err != nil {
 		return nil, fmt.Errorf("dial peer: %v", err)
@@ -78,13 +83,14 @@ func hasChunks(hash []byte, peer string) (*bitset.BitSet, error) {
 
 type Peer struct {
 	Address  string
+	Hash     []byte
 	Chunkset *bitset.BitSet
 }
 
-func (peer *Peer) Update(hash []byte) {
-	chunkset, err := hasChunks(hash, peer.Address)
+func (peer *Peer) Refresh() {
+	chunkset, err := HasChunks(peer.Hash, peer.Address)
 	if err != nil {
-		log.Printf("Fetch chunkset from peer %s: %v", peer.Address, err)
+		log.Printf("fetch chunkset from peer %s: %v", peer.Address, err)
 		peer.Chunkset = bitset.New(0)
 	} else {
 		peer.Chunkset = chunkset
@@ -93,6 +99,7 @@ func (peer *Peer) Update(hash []byte) {
 
 type Task struct {
 	Fetched     chan int64
+	Tracker     *tracker.Tracker
 	Peers       []Peer
 	Peer        int
 	Hash        []byte
@@ -101,7 +108,7 @@ type Task struct {
 	Destination string
 }
 
-func fetchChunk(task Task) error {
+func (task Task) Fetch() error {
 	peerConn, err := grpc.Dial(task.Peers[task.Peer].Address, grpc.WithInsecure(), grpc.WithTimeout(time.Minute), grpc.WithBackoffMaxDelay(time.Minute))
 	if err != nil {
 		return fmt.Errorf("dial peer: %v", err)
@@ -128,73 +135,113 @@ func fetchChunk(task Task) error {
 	return nil
 }
 
-func fetchWorker(tasks chan Task, done chan bool) {
-	for {
-		select {
-		case <-done:
-			return
-		case task := <-tasks:
-			chunk := uint(task.Chunk)
-			for {
-				for j := range task.Peers {
-					if !task.Peers[j].Chunkset.Test(chunk) {
-						log.Printf("Peer %s does not have chunk %d", j, chunk)
-						continue
-					}
-					task.Peer = j
-					if err := fetchChunk(task); err != nil {
-						log.Printf("Fetch chunk %d from peer %s failed: %v", chunk, j, err)
-						continue
-					}
-					task.Fetched <- task.Chunk
-					return
+func randomIntOrder(n int) []int {
+	order := make([]int, n)
+	for i := 0; i < n; i++ {
+		order[i] = i
+	}
+	rand.Shuffle(n, func(i, j int) { order[i], order[j] = order[j], order[i] })
+	return order
+}
+
+func fetchWorker(tasks chan Task) {
+	for task := range tasks {
+		chunk := uint(task.Chunk)
+		fetched := false
+		for cycle := 0; !fetched; cycle++ {
+			// To load balance, generate random peer order per cycle
+			order := randomIntOrder(len(task.Peers))
+			for i := 0; i < len(task.Peers) && !fetched; i++ {
+				j := order[i]
+				if !task.Peers[j].Chunkset.Test(chunk) {
+					log.Printf("peer %s does not have chunk %d", task.Peers[j].Address, chunk)
+					continue
+				}
+				task.Peer = j
+				if err := task.Fetch(); err != nil {
+					log.Printf("fetch chunk %d from peer %s failed: %v", chunk, task.Peers[j].Address, err)
+					continue
+				}
+				task.Fetched <- task.Chunk
+				fetched = true
+			}
+			if !fetched {
+				log.Printf("worker cycled for chunk %d in iteration %d", chunk, cycle)
+				// Do exponential backoff, reaches max around 16 cycles
+				backoff := time.Second * time.Duration(math.Min(60.0, math.Pow(1.3, float64(cycle))))
+				time.Sleep(backoff)
+				// To resolve worker cycle, re-fetch peers and chunksets
+				peers, err := Resolve(task.Tracker)
+				if err != nil {
+					log.Printf("resolve after cycle: %v", err)
+				} else {
+					task.Peers = peers
 				}
 			}
 		}
 	}
 }
 
-// Fetch downloads a file to the given destination.
-func Fetch(path string, tracker *tracker.Tracker) error {
-	// List peers from tracker
-	peers, err := listPeers(tracker.Hash, tracker.Addr)
+// Resolve fetches a list of serving peer from the tracker.
+func Resolve(tracker *tracker.Tracker) ([]Peer, error) {
+	peers, err := ListPeers(tracker.Hash, tracker.Addr)
 	if err != nil {
-		return fmt.Errorf("list peers: %v", err)
+		return nil, fmt.Errorf("list peers: %v", err)
 	}
 	// And update peer chunksets
 	for i := range peers {
-		peers[i].Update(tracker.Hash)
+		peers[i].Refresh()
+	}
+	return peers, nil
+}
+
+// Fetch downloads a file to the given destination.
+func Fetch(path string, tracker *tracker.Tracker, numWorkers int) error {
+	peers, err := Resolve(tracker)
+	if err != nil {
+		return fmt.Errorf("resolve peers: %v", err)
 	}
 	// Spawn workers
-
-	// Look for chunks
-	numChunks := uint(len(tracker.ChunkHashes))
-	fetched := bitset.New(numChunks)
-	for fetched.Count() < numChunks {
-		for i, chunkHash := range tracker.ChunkHashes {
-			path := fmt.Sprintf("%s.%d", path, i)
-			for j, peer := range peers {
-				if !chunksets[j].Test(uint(i)) {
-					log.Printf("Peer %s does not have chunk %d", peer, i)
-					continue
-				}
-				if err := fetchChunk(tracker.Hash, chunkHash, peer, int64(i), path); err != nil {
-					log.Printf("Fetch chunk %d from peer %s failed: %v", i, peer, err)
-					continue
-				}
-				fetched.Set(uint(i))
-			}
-		}
-		progress := float32(fetched.Count()) / float32(numChunks) * 100.
-		log.Printf("Total progress: %.2f%%", progress)
+	tasks := make(chan Task)
+	for i := 0; i < numWorkers; i++ {
+		go fetchWorker(tasks)
 	}
+	// Track fetch progress
+	numFetched, numChunks := 0, len(tracker.ChunkHashes)
+	fetched := make(chan int64, 1)
+	done := make(chan bool)
+	go func() {
+		for numFetched < numChunks {
+			<-fetched
+			numFetched++
+			log.Printf("total progress: %.2f%%", float32(numFetched)/float32(numChunks)*100.)
+		}
+		done <- true
+	}()
+	// Schedule chunk fetches
+	for i := range tracker.ChunkHashes {
+		tasks <- Task{
+			Fetched:     fetched,
+			Tracker:     tracker,
+			Peers:       peers,
+			Hash:        tracker.Hash,
+			ChunkHash:   tracker.ChunkHashes[i],
+			Chunk:       int64(i),
+			Destination: fmt.Sprintf("%s.%d", path, i),
+		}
+	}
+	// Synchronize, shut down workers
+	<-done
+	close(done)
+	close(tasks)
+	close(fetched)
 	// Stick chunks together
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create final file: %v", err)
 	}
 	defer file.Close()
-	for i := 0; i < len(tracker.ChunkHashes); i++ {
+	for i := range tracker.ChunkHashes {
 		if err := func() error {
 			chunkpath := fmt.Sprintf("%s.%d", path, i)
 			chunkfile, err := os.Open(chunkpath)
@@ -208,6 +255,13 @@ func Fetch(path string, tracker *tracker.Tracker) error {
 			return nil
 		}(); err != nil {
 			return fmt.Errorf("final assembly: %v", err)
+		}
+	}
+	// Cleanup chunk files
+	for i := range tracker.ChunkHashes {
+		chunkpath := fmt.Sprintf("%s.%d", path, i)
+		if err := os.Remove(chunkpath); err != nil {
+			return fmt.Errorf("remove chunkfile %s: %v", chunkpath, err)
 		}
 	}
 	return nil
