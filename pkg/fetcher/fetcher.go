@@ -19,20 +19,21 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"github.com/lnsp/ftp2p/pkg/seeder"
-	"github.com/lnsp/ftp2p/pkg/tavern"
-	"github.com/lnsp/ftp2p/pkg/tracker"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"time"
 
+	"github.com/lnsp/ftp2p/pkg/seeder"
+	"github.com/lnsp/ftp2p/pkg/tavern"
+	"github.com/lnsp/ftp2p/pkg/tracker"
+
 	"github.com/willf/bitset"
 	"google.golang.org/grpc"
 )
 
-func listPeers(hash []byte, addr string) ([]string, error) {
+func listPeers(hash []byte, addr string) ([]Peer, error) {
 	// Contact tracker for peers
 	tavernConn, err := grpc.Dial(addr, grpc.WithInsecure(), grpc.WithTimeout(time.Minute), grpc.WithBackoffMaxDelay(time.Minute))
 	if err != nil {
@@ -48,9 +49,11 @@ func listPeers(hash []byte, addr string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list peers: %v", err)
 	}
-	peers := make([]string, len(resp.Peers))
+	peers := make([]Peer, len(resp.Peers))
 	for i := range resp.Peers {
-		peers[i] = resp.Peers[i].Addr
+		peers[i] = Peer{
+			Address: resp.Peers[i].Addr,
+		}
 	}
 	return peers, nil
 }
@@ -73,8 +76,33 @@ func hasChunks(hash []byte, peer string) (*bitset.BitSet, error) {
 	return bitset.From(resp.Chunks), nil
 }
 
-func fetchChunk(hash []byte, chunkhash []byte, peer string, chunk int64, path string) error {
-	peerConn, err := grpc.Dial(peer, grpc.WithInsecure(), grpc.WithTimeout(time.Minute), grpc.WithBackoffMaxDelay(time.Minute))
+type Peer struct {
+	Address  string
+	Chunkset *bitset.BitSet
+}
+
+func (peer *Peer) Update(hash []byte) {
+	chunkset, err := hasChunks(hash, peer.Address)
+	if err != nil {
+		log.Printf("Fetch chunkset from peer %s: %v", peer.Address, err)
+		peer.Chunkset = bitset.New(0)
+	} else {
+		peer.Chunkset = chunkset
+	}
+}
+
+type Task struct {
+	Fetched     chan int64
+	Peers       []Peer
+	Peer        int
+	Hash        []byte
+	ChunkHash   []byte
+	Chunk       int64
+	Destination string
+}
+
+func fetchChunk(task Task) error {
+	peerConn, err := grpc.Dial(task.Peers[task.Peer].Address, grpc.WithInsecure(), grpc.WithTimeout(time.Minute), grpc.WithBackoffMaxDelay(time.Minute))
 	if err != nil {
 		return fmt.Errorf("dial peer: %v", err)
 	}
@@ -83,39 +111,62 @@ func fetchChunk(hash []byte, chunkhash []byte, peer string, chunk int64, path st
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	resp, err := peerClient.Fetch(ctx, &seeder.FetchRequest{
-		Hash:  hash,
-		Chunk: chunk,
+		Hash:  task.Hash,
+		Chunk: task.Chunk,
 	})
 	if err != nil {
 		return fmt.Errorf("seeder fetch: %v", err)
 	}
 	hasher := sha256.New()
 	hasher.Write(resp.Data)
-	if !bytes.Equal(hasher.Sum(nil), chunkhash) {
+	if !bytes.Equal(hasher.Sum(nil), task.ChunkHash) {
 		return fmt.Errorf("bad chunk from peer")
 	}
-	if err := ioutil.WriteFile(path, resp.Data, 0644); err != nil {
+	if err := ioutil.WriteFile(task.Destination, resp.Data, 0644); err != nil {
 		return fmt.Errorf("chunk write: %v", err)
 	}
 	return nil
 }
 
+func fetchWorker(tasks chan Task, done chan bool) {
+	for {
+		select {
+		case <-done:
+			return
+		case task := <-tasks:
+			chunk := uint(task.Chunk)
+			for {
+				for j := range task.Peers {
+					if !task.Peers[j].Chunkset.Test(chunk) {
+						log.Printf("Peer %s does not have chunk %d", j, chunk)
+						continue
+					}
+					task.Peer = j
+					if err := fetchChunk(task); err != nil {
+						log.Printf("Fetch chunk %d from peer %s failed: %v", chunk, j, err)
+						continue
+					}
+					task.Fetched <- task.Chunk
+					return
+				}
+			}
+		}
+	}
+}
+
+// Fetch downloads a file to the given destination.
 func Fetch(path string, tracker *tracker.Tracker) error {
 	// List peers from tracker
 	peers, err := listPeers(tracker.Hash, tracker.Addr)
 	if err != nil {
 		return fmt.Errorf("list peers: %v", err)
 	}
-	// Contact peers for chunks
-	chunksets := make([]*bitset.BitSet, len(peers))
+	// And update peer chunksets
 	for i := range peers {
-		chunkset, err := hasChunks(tracker.Hash, peers[i])
-		if err != nil {
-			chunksets[i] = bitset.New(0)
-		} else {
-			chunksets[i] = chunkset
-		}
+		peers[i].Update(tracker.Hash)
 	}
+	// Spawn workers
+
 	// Look for chunks
 	numChunks := uint(len(tracker.ChunkHashes))
 	fetched := bitset.New(numChunks)
