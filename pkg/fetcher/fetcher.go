@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"math"
@@ -135,6 +134,10 @@ func (task Task) Fetch() error {
 	return nil
 }
 
+func generateChunkPath(basepath string, i int) string {
+	return fmt.Sprintf("%s.%d", basepath, i)
+}
+
 func randomIntOrder(n int) []int {
 	order := make([]int, n)
 	for i := 0; i < n; i++ {
@@ -148,6 +151,11 @@ func fetchWorker(tasks chan Task) {
 	for task := range tasks {
 		chunk := uint(task.Chunk)
 		fetched := false
+		// Check for local correct copy
+		if _, err := readAndVerify(task.Destination, task.ChunkHash); err == nil {
+			fetched = true
+		}
+		// If not exist, try to fetch
 		for cycle := 0; !fetched; cycle++ {
 			// To load balance, generate random peer order per cycle
 			order := randomIntOrder(len(task.Peers))
@@ -162,7 +170,6 @@ func fetchWorker(tasks chan Task) {
 					log.Printf("fetch chunk %d from peer %s failed: %v", chunk, task.Peers[j].Address, err)
 					continue
 				}
-				task.Fetched <- task.Chunk
 				fetched = true
 			}
 			if !fetched {
@@ -179,7 +186,23 @@ func fetchWorker(tasks chan Task) {
 				}
 			}
 		}
+		// Submit success
+		task.Fetched <- task.Chunk
 	}
+}
+
+func readAndVerify(path string, hash []byte) ([]byte, error) {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read and verify: %w", err)
+	}
+	hasher := sha256.New()
+	hasher.Write(data)
+	sum := hasher.Sum(nil)
+	if !bytes.Equal(sum, hash) {
+		return nil, fmt.Errorf("hash does not match")
+	}
+	return data, nil
 }
 
 // Resolve fetches a list of serving peer from the tracker.
@@ -227,7 +250,7 @@ func Fetch(path string, tracker *tracker.Tracker, numWorkers int) error {
 			Hash:        tracker.Hash,
 			ChunkHash:   tracker.ChunkHashes[i],
 			Chunk:       int64(i),
-			Destination: fmt.Sprintf("%s.%d", path, i),
+			Destination: generateChunkPath(path, i),
 		}
 	}
 	// Synchronize, shut down workers
@@ -243,13 +266,11 @@ func Fetch(path string, tracker *tracker.Tracker, numWorkers int) error {
 	defer file.Close()
 	for i := range tracker.ChunkHashes {
 		if err := func() error {
-			chunkpath := fmt.Sprintf("%s.%d", path, i)
-			chunkfile, err := os.Open(chunkpath)
+			chunk, err := readAndVerify(generateChunkPath(path, i), tracker.ChunkHashes[i])
 			if err != nil {
 				return err
 			}
-			defer chunkfile.Close()
-			if _, err := io.Copy(file, chunkfile); err != nil {
+			if _, err := file.Write(chunk); err != nil {
 				return err
 			}
 			return nil
