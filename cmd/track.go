@@ -27,7 +27,7 @@ var trackCmd = &cobra.Command{
 
 func init() {
 	trackCmd.Flags().StringVarP(&trackInput, "input", "i", "input", "Input file to track")
-	trackCmd.Flags().StringVarP(&trackTavern, "tavern", "h", "localhost:6443", "Tavern host which serves the peer sessions")
+	trackCmd.Flags().StringVarP(&trackTavern, "tavern", "s", "localhost:6443", "Tavern host which serves the peer sessions")
 	trackCmd.Flags().StringVarP(&trackTracker, "tracker", "t", "tracker", "Tracker file")
 	rootCmd.AddCommand(trackCmd)
 }
