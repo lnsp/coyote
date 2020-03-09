@@ -15,77 +15,18 @@
 package tavern
 
 import (
-	"bytes"
 	context "context"
+	"crypto/tls"
 	"encoding/hex"
-	fmt "fmt"
 	"log"
-	"net"
-	"sort"
 	"sync"
 	"time"
 
-	"github.com/emirpasic/gods/maps/treemap"
-	grpc "google.golang.org/grpc"
+	qgrpc "github.com/lnsp/grpc-quic"
+	"github.com/lnsp/grpc-quic/opts"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
-
-type PeerEntry struct {
-	Peer      *Peer
-	Timestamp time.Time
-}
-
-type PeerIndex struct {
-	sync.RWMutex
-	treemap *treemap.Map
-}
-
-func newPeerIndex() *PeerIndex {
-	return &PeerIndex{
-		treemap: treemap.NewWith(byteSliceComparator),
-	}
-}
-
-func (index *PeerIndex) Find(hash []byte) ([]PeerEntry, bool) {
-	index.RLock()
-	value, ok := index.treemap.Get(hash)
-	index.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	return value.([]PeerEntry), true
-}
-
-func (index *PeerIndex) Clean(hash []byte, timeout int64) {
-	index.Lock()
-	defer index.Unlock()
-	value, ok := index.treemap.Get(hash)
-	if !ok {
-		return
-	}
-	entries := value.([]PeerEntry)
-	n := sort.Search(len(entries), func(i int) bool {
-		return entries[i].Timestamp.After(time.Now().Add(time.Duration(-timeout) * time.Second))
-	})
-	index.treemap.Put(hash, entries[n:])
-}
-
-func (index *PeerIndex) Seed(hash []byte, peer *Peer) {
-	index.Lock()
-	value, ok := index.treemap.Get(hash)
-	var entries []PeerEntry
-	if ok {
-		entries = value.([]PeerEntry)
-	}
-	entries = append(entries, PeerEntry{peer, time.Now()})
-	index.treemap.Put(hash, entries)
-	index.Unlock()
-}
-
-func byteSliceComparator(a, b interface{}) int {
-	return bytes.Compare(a.([]byte), b.([]byte))
-}
 
 type Tavern struct {
 	AnnounceInterval int64
@@ -93,6 +34,7 @@ type Tavern struct {
 
 	cleanupLock  sync.Mutex
 	cleanupQueue [][]byte
+	tlsConfig    *tls.Config
 }
 
 func (tavern *Tavern) List(ctx context.Context, req *ListRequest) (*ListResponse, error) {
@@ -155,24 +97,18 @@ func (tavern *Tavern) cleanupWorker() {
 }
 
 func (tavern *Tavern) ListenAndServe(addr string) error {
-	listener, err := net.Listen("tcp", addr)
+	grpcServer, listener, err := qgrpc.NewServer(addr, opts.TLSConfig(tavern.tlsConfig))
 	if err != nil {
-		return fmt.Errorf("tcp listen: %v", err)
+		return err
 	}
-	grpcServer := grpc.NewServer()
 	RegisterTavernServer(grpcServer, tavern)
-	log.Printf("Hosting tavern on %s", addr)
-
-	go tavern.cleanupWorker()
-	if err := grpcServer.Serve(listener); err != nil {
-		return fmt.Errorf("tavern serve: %v", err)
-	}
-	return nil
+	return grpcServer.Serve(listener)
 }
 
-func New(interval int64) *Tavern {
+func New(interval int64, tlsConfig *tls.Config) *Tavern {
 	return &Tavern{
 		AnnounceInterval: interval,
 		index:            newPeerIndex(),
+		tlsConfig:        tlsConfig,
 	}
 }

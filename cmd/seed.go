@@ -7,18 +7,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	seedAddr    string
+	seedFile    string
+	seedTracker string
+)
+
 var seedCmd = &cobra.Command{
-	Use:   "seed [addr] [file] [tracker]",
+	Use:   "seed",
 	Short: "Seed file for other to download",
-	Args:  cobra.ExactArgs(3),
+	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		addr, path, tpath := args[0], args[1], args[2]
-		track, err := tracker.Open(tpath)
+		track, err := tracker.Open(seedTracker)
 		if err != nil {
 			return err
 		}
-		seed := seeder.New(addr, 64)
-		if err := seed.Seed(path, track); err != nil {
+		seed := seeder.New(seedAddr, 64)
+		if err := seed.Seed(seedFile, track); err != nil {
 			return err
 		}
 		if err := seed.ListenAndServe(); err != nil {
@@ -29,5 +34,8 @@ var seedCmd = &cobra.Command{
 }
 
 func init() {
+	seedCmd.Flags().StringVarP(&seedAddr, "listen", "l", "localhost:6444", "Address to listen on")
+	seedCmd.Flags().StringVarP(&seedFile, "input", "i", "input", "Tracked input file to seed")
+	seedCmd.Flags().StringVarP(&seedTracker, "tracker", "t", "tracker", "Tracker to use")
 	rootCmd.AddCommand(seedCmd)
 }

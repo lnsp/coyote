@@ -15,24 +15,22 @@
 package seeder
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	fmt "fmt"
-	"github.com/lnsp/ftp2p/pkg/tavern"
-	"github.com/lnsp/ftp2p/pkg/tracker"
 	"log"
-	"net"
 	"os"
-	"sort"
-	"sync"
 	"time"
 
-	"github.com/emirpasic/gods/maps/treemap"
-	"github.com/willf/bitset"
-	grpc "google.golang.org/grpc"
+	"github.com/lnsp/ftp2p/pkg/hash"
+	"github.com/lnsp/ftp2p/pkg/security"
+	"github.com/lnsp/ftp2p/pkg/tavern"
+	"github.com/lnsp/ftp2p/pkg/tracker"
+	"github.com/lnsp/grpc-quic/opts"
+
+	qgrpc "github.com/lnsp/grpc-quic"
 	"google.golang.org/grpc/codes"
-	status "google.golang.org/grpc/status"
+	"google.golang.org/grpc/status"
 )
 
 type Pool struct {
@@ -60,81 +58,6 @@ func newPool(size int) *Pool {
 		p <- true
 	}
 	return &Pool{p}
-}
-
-func byteSliceComparator(a, b interface{}) int {
-	return bytes.Compare(a.([]byte), b.([]byte))
-}
-
-type FileEntry struct {
-	Path   string
-	Chunk  int64
-	Offset int64
-	Size   int64
-}
-
-type FileIndex struct {
-	sync.RWMutex
-	treemap *treemap.Map
-}
-
-func (index *FileIndex) Scan(hash []byte) *bitset.BitSet {
-	index.RLock()
-	value, ok := index.treemap.Get(hash)
-	index.RUnlock()
-	if !ok {
-		return bitset.New(0)
-	}
-	chunks := bitset.New(uint(tracker.MinChunkCount))
-	entries := value.([]*FileEntry)
-	for _, e := range entries {
-		chunks.Set(uint(e.Chunk))
-	}
-	return chunks
-}
-
-func (index *FileIndex) Get(hash []byte, chunk int64) (*FileEntry, bool) {
-	index.RLock()
-	value, ok := index.treemap.Get(hash)
-	index.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	entries := value.([]*FileEntry)
-	found := sort.Search(len(entries), func(i int) bool {
-		return entries[i].Chunk >= chunk
-	})
-	if found >= len(entries) || entries[found].Chunk != chunk {
-		return nil, false
-	}
-	return entries[found], true
-}
-
-func (index *FileIndex) Add(path string, tracker *tracker.Tracker) {
-	var offset int64
-	entries := make([]*FileEntry, len(tracker.ChunkHashes))
-	for chunk := range tracker.ChunkHashes {
-		size := tracker.ChunkSize
-		if chunk == len(tracker.ChunkHashes)-1 {
-			size = tracker.Size - offset
-		}
-		entries[chunk] = &FileEntry{
-			Path:   path,
-			Chunk:  int64(chunk),
-			Offset: offset,
-			Size:   size,
-		}
-		offset += size
-	}
-	index.Lock()
-	index.treemap.Put(tracker.Hash, entries)
-	index.Unlock()
-}
-
-func newFileIndex() *FileIndex {
-	return &FileIndex{
-		treemap: treemap.NewWith(byteSliceComparator),
-	}
 }
 
 type Seeder struct {
@@ -174,7 +97,7 @@ func (seeder *Seeder) Fetch(ctx context.Context, req *FetchRequest) (*FetchRespo
 }
 
 func (seeder *Seeder) Announce(tracker *tracker.Tracker) (int64, error) {
-	conn, err := grpc.Dial(tracker.Addr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(time.Minute), grpc.WithBackoffMaxDelay(time.Minute))
+	conn, err := qgrpc.Dial(tracker.Addr, opts.WithInsecure(), opts.WithBlock(), opts.WithTimeout(time.Minute), opts.WithBackoffMaxDelay(time.Minute))
 	if err != nil {
 		return 0, fmt.Errorf("announce to tavern: %v", err)
 	}
@@ -193,6 +116,10 @@ func (seeder *Seeder) Announce(tracker *tracker.Tracker) (int64, error) {
 }
 
 func (seeder *Seeder) Seed(path string, tracker *tracker.Tracker) error {
+	// Verify hash for tracker
+	if err := hash.Verify(path, tracker.Hash); err != nil {
+		return fmt.Errorf("verify path: %w", err)
+	}
 	log.Printf("Add tracker %s for %s", hex.EncodeToString(tracker.Hash), path)
 	seeder.index.Add(path, tracker)
 	go func() {
@@ -211,16 +138,16 @@ func (seeder *Seeder) Seed(path string, tracker *tracker.Tracker) error {
 }
 
 func (seeder *Seeder) ListenAndServe() error {
-	listener, err := net.Listen("tcp", seeder.Addr)
+	tlsCfg, err := security.NewBasicTLS()
 	if err != nil {
-		return fmt.Errorf("seeder listen: %v", err)
+		return err
 	}
-	grpcServer := grpc.NewServer()
+	grpcServer, listener, err := qgrpc.NewServer(seeder.Addr, opts.TLSConfig(tlsCfg))
+	if err != nil {
+		return err
+	}
 	RegisterSeederServer(grpcServer, seeder)
-	if err := grpcServer.Serve(listener); err != nil {
-		return fmt.Errorf("seeder serve: %v", err)
-	}
-	return nil
+	return grpcServer.Serve(listener)
 }
 
 func New(addr string, poolsize int) *Seeder {

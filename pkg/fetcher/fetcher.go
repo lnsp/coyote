@@ -29,15 +29,16 @@ import (
 	"github.com/lnsp/ftp2p/pkg/seeder"
 	"github.com/lnsp/ftp2p/pkg/tavern"
 	"github.com/lnsp/ftp2p/pkg/tracker"
+	"github.com/lnsp/grpc-quic/opts"
 
+	qgrpc "github.com/lnsp/grpc-quic"
 	"github.com/willf/bitset"
-	"google.golang.org/grpc"
 )
 
 // ListPeers contacts a tracker looking for a given hash.
 func ListPeers(hash []byte, addr string) ([]Peer, error) {
 	// Contact tracker for peers
-	tavernConn, err := grpc.Dial(addr, grpc.WithInsecure(), grpc.WithTimeout(time.Minute), grpc.WithBackoffMaxDelay(time.Minute))
+	tavernConn, err := qgrpc.Dial(addr, opts.WithInsecure(), opts.WithTimeout(time.Minute), opts.WithBackoffMaxDelay(time.Minute))
 	if err != nil {
 		return nil, fmt.Errorf("dial tavern: %v", err)
 	}
@@ -63,7 +64,7 @@ func ListPeers(hash []byte, addr string) ([]Peer, error) {
 
 // HasChunks fetches the set of chunks served by the peer.
 func HasChunks(hash []byte, peer string) (*bitset.BitSet, error) {
-	peerConn, err := grpc.Dial(peer, grpc.WithInsecure(), grpc.WithTimeout(time.Minute), grpc.WithBackoffMaxDelay(time.Minute))
+	peerConn, err := qgrpc.Dial(peer, opts.WithInsecure(), opts.WithTimeout(time.Minute), opts.WithBackoffMaxDelay(time.Minute))
 	if err != nil {
 		return nil, fmt.Errorf("dial peer: %v", err)
 	}
@@ -108,7 +109,7 @@ type Task struct {
 }
 
 func (task Task) Fetch() error {
-	peerConn, err := grpc.Dial(task.Peers[task.Peer].Address, grpc.WithInsecure(), grpc.WithTimeout(time.Minute), grpc.WithBackoffMaxDelay(time.Minute))
+	peerConn, err := qgrpc.Dial(task.Peers[task.Peer].Address, opts.WithInsecure(), opts.WithTimeout(time.Minute), opts.WithBackoffMaxDelay(time.Minute))
 	if err != nil {
 		return fmt.Errorf("dial peer: %v", err)
 	}

@@ -12,8 +12,8 @@ There are three types of actors in a functioning `ftp2p` environment. First of a
 * [x] Announcement timeouts
 * [x] Better chunk download scheduling
 * [x] Add support to resume fetches by checking for already downloaded chunks (and verifying them)
+* [x] Use UDP-based QUIC as transport layer for gRPC (with this comes UDP hole punching)
 * [ ] Encryption of tavern traffic using Let's Encrypt certificates
-* [ ] Use UDP-based QUIC as transport layer for gRPC (with this comes UDP hole punching)
 * [ ] Use distributed hash tables for decentralized peer discovery
 * [ ] Split `.tracker` into public- and private trackers, allowing for file encryption
 * [ ] Add tests for fetcher, seeder, tavern and tracker

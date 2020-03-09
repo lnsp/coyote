@@ -1,28 +1,30 @@
 package cmd
 
 import (
+	"runtime"
+
 	"github.com/lnsp/ftp2p/pkg/fetcher"
 	"github.com/lnsp/ftp2p/pkg/tracker"
-	"runtime"
 
 	"github.com/spf13/cobra"
 )
 
+var (
+	fetchTracker string
+	fetchOutput  string
+	fetchWorkers int
+)
+
 var fetchCmd = &cobra.Command{
-	Use:   "fetch [tracker] [destination]",
+	Use:   "fetch",
 	Short: "Fetch file from peer-to-peer network",
-	Args:  cobra.ExactArgs(2),
+	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		tpath, path := args[0], args[1]
-		n, err := cmd.Flags().GetInt("workers")
+		t, err := tracker.Open(fetchTracker)
 		if err != nil {
 			return err
 		}
-		t, err := tracker.Open(tpath)
-		if err != nil {
-			return err
-		}
-		if err := fetcher.Fetch(path, t, n); err != nil {
+		if err := fetcher.Fetch(fetchOutput, t, fetchWorkers); err != nil {
 			return err
 		}
 		return nil
@@ -30,6 +32,8 @@ var fetchCmd = &cobra.Command{
 }
 
 func init() {
-	fetchCmd.Flags().IntP("workers", "n", runtime.NumCPU(), "Number of workers used for pulling chunks")
+	fetchCmd.Flags().StringVarP(&fetchTracker, "tracker", "t", "tracker", "Tracker file to use")
+	fetchCmd.Flags().StringVarP(&fetchOutput, "output", "o", "output", "Output file path")
+	fetchCmd.Flags().IntVarP(&fetchWorkers, "workers", "n", runtime.NumCPU(), "Number of workers used for pulling chunks")
 	rootCmd.AddCommand(fetchCmd)
 }
