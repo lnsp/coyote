@@ -34,6 +34,7 @@ import (
 	"github.com/lnsp/ftp2p/http3utils"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/schollz/progressbar"
 )
 
 // ListPeers contacts a tracker looking for a given hash.
@@ -230,11 +231,13 @@ func Fetch(path string, tracker *trackerv1.Tracker, numWorkers int, insecure boo
 	numFetched, numChunks := 0, len(tracker.ChunkHashes)
 	fetched := make(chan int64, 1)
 	done := make(chan bool)
+	// Show progress in terminal
+	progress := progressbar.New(numChunks)
 	go func() {
 		for numFetched < numChunks {
 			<-fetched
 			numFetched++
-			log.Printf("total progress: %.2f%%", float32(numFetched)/float32(numChunks)*100.)
+			progress.Add(1)
 		}
 		done <- true
 	}()
