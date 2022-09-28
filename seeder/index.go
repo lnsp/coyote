@@ -5,9 +5,10 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/emirpasic/gods/maps/treemap"
-	"github.com/lnsp/ftp2p/pkg/tracker"
-	"github.com/willf/bitset"
+	trackerv1 "github.com/lnsp/ftp2p/gen/tracker/v1"
+	"github.com/lnsp/ftp2p/tracker"
 )
 
 func byteSliceComparator(a, b interface{}) int {
@@ -58,7 +59,7 @@ func (index *FileIndex) Get(hash []byte, chunk int64) (*FileEntry, bool) {
 	return entries[found], true
 }
 
-func (index *FileIndex) Add(path string, tracker *tracker.Tracker) {
+func (index *FileIndex) Add(path string, tracker *trackerv1.Tracker) {
 	var offset int64
 	entries := make([]*FileEntry, len(tracker.ChunkHashes))
 	for chunk := range tracker.ChunkHashes {

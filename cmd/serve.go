@@ -4,8 +4,8 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/lnsp/ftp2p/pkg/security"
-	"github.com/lnsp/ftp2p/pkg/tavern"
+	"github.com/lnsp/ftp2p/security"
+	"github.com/lnsp/ftp2p/tavern"
 
 	"github.com/spf13/cobra"
 )
@@ -33,8 +33,8 @@ var serveCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("setup TLS: %v", err)
 		}
-		server := tavern.New(announcementTimeout, tlsConfig)
-		return server.ListenAndServe(serveAddr)
+		server := tavern.New(announcementTimeout)
+		return server.ListenAndServe(serveAddr, tlsConfig)
 	},
 }
 

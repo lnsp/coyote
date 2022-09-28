@@ -19,13 +19,17 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
-	qgrpc "github.com/lnsp/grpc-quic"
-	"github.com/lnsp/grpc-quic/opts"
+	"github.com/bufbuild/connect-go"
+	"github.com/lucas-clemente/quic-go/http3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	tavernv1 "github.com/lnsp/ftp2p/gen/tavern/v1"
+	"github.com/lnsp/ftp2p/gen/tavern/v1/tavernv1connect"
 )
 
 type Tavern struct {
@@ -34,16 +38,18 @@ type Tavern struct {
 
 	cleanupLock  sync.Mutex
 	cleanupQueue [][]byte
-	tlsConfig    *tls.Config
+
+	tavernv1connect.UnimplementedTavernServiceHandler
 }
 
-func (tavern *Tavern) List(ctx context.Context, req *ListRequest) (*ListResponse, error) {
-	log.Printf("List peers for %s", hex.EncodeToString(req.Hash))
-	entries, ok := tavern.index.Find(req.Hash)
+// List all announced peers for the given hash.
+func (tavern *Tavern) List(ctx context.Context, req *connect.Request[tavernv1.ListRequest]) (*connect.Response[tavernv1.ListResponse], error) {
+	log.Printf("List peers for %s", hex.EncodeToString(req.Msg.Hash))
+	entries, ok := tavern.index.Find(req.Msg.Hash)
 	if !ok {
 		return nil, status.Error(codes.NotFound, "hash not found")
 	}
-	peers := make([]*Peer, len(entries))
+	peers := make([]*tavernv1.Peer, len(entries))
 	expired := false
 	for i, e := range entries {
 		if e.Timestamp.Add(time.Duration(tavern.AnnounceInterval) * time.Second).Before(time.Now()) {
@@ -52,23 +58,26 @@ func (tavern *Tavern) List(ctx context.Context, req *ListRequest) (*ListResponse
 		peers[i] = e.Peer
 	}
 	if expired {
-		tavern.scheduleForCleanup(req.Hash, 0)
+		tavern.scheduleForCleanup(req.Msg.Hash, 0)
 	}
-	return &ListResponse{
+	return connect.NewResponse(&tavernv1.ListResponse{
 		Peers:    peers,
 		Interval: tavern.AnnounceInterval,
-	}, nil
+	}), nil
 }
 
-func (tavern *Tavern) Announce(ctx context.Context, req *AnnounceRequest) (*AnnounceResponse, error) {
-	log.Printf("Announce peer %s for %s", req.Addr, hex.EncodeToString(req.Hash))
-	tavern.index.Seed(req.Hash, &Peer{
-		Addr: req.Addr,
+// Announce a new peer for the given hash.
+func (tavern *Tavern) Announce(ctx context.Context, req *connect.Request[tavernv1.AnnounceRequest]) (*connect.Response[tavernv1.AnnounceResponse], error) {
+	log.Printf("Announce peer %s for %s", req.Msg.Addr, hex.EncodeToString(req.Msg.Hash))
+
+	tavern.index.Seed(req.Msg.Hash, &tavernv1.Peer{
+		Addr:      req.Msg.Addr,
+		PublicKey: req.Msg.PublicKey,
 	})
-	tavern.scheduleForCleanup(req.Hash, time.Duration(tavern.AnnounceInterval)*time.Second)
-	return &AnnounceResponse{
+	tavern.scheduleForCleanup(req.Msg.Hash, time.Duration(tavern.AnnounceInterval)*time.Second)
+	return connect.NewResponse(&tavernv1.AnnounceResponse{
 		Interval: tavern.AnnounceInterval,
-	}, nil
+	}), nil
 }
 
 func (tavern *Tavern) scheduleForCleanup(hash []byte, after time.Duration) {
@@ -96,19 +105,23 @@ func (tavern *Tavern) cleanupWorker() {
 	}
 }
 
-func (tavern *Tavern) ListenAndServe(addr string) error {
-	grpcServer, listener, err := qgrpc.NewServer(addr, opts.TLSConfig(tavern.tlsConfig))
-	if err != nil {
-		return err
+func (tavern *Tavern) ListenAndServe(addr string, tlsConfig *tls.Config) error {
+	path, handler := tavernv1connect.NewTavernServiceHandler(tavern)
+	// Setup mux
+	mux := http.NewServeMux()
+	mux.Handle(path, handler)
+	// Setup Connect handler
+	server := &http3.Server{
+		Addr:      addr,
+		TLSConfig: tlsConfig,
+		Handler:   mux,
 	}
-	RegisterTavernServer(grpcServer, tavern)
-	return grpcServer.Serve(listener)
+	return server.ListenAndServe()
 }
 
-func New(interval int64, tlsConfig *tls.Config) *Tavern {
+func New(interval int64) *Tavern {
 	return &Tavern{
 		AnnounceInterval: interval,
 		index:            newPeerIndex(),
-		tlsConfig:        tlsConfig,
 	}
 }

@@ -19,76 +19,77 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"math"
 	"math/rand"
 	"os"
 	"time"
 
-	"github.com/lnsp/ftp2p/pkg/seeder"
-	"github.com/lnsp/ftp2p/pkg/tavern"
-	"github.com/lnsp/ftp2p/pkg/tracker"
-	"github.com/lnsp/grpc-quic/opts"
+	"github.com/bufbuild/connect-go"
+	seederv1 "github.com/lnsp/ftp2p/gen/seeder/v1"
+	"github.com/lnsp/ftp2p/gen/seeder/v1/seederv1connect"
+	tavernv1 "github.com/lnsp/ftp2p/gen/tavern/v1"
+	"github.com/lnsp/ftp2p/gen/tavern/v1/tavernv1connect"
+	trackerv1 "github.com/lnsp/ftp2p/gen/tracker/v1"
+	"github.com/lnsp/ftp2p/http3utils"
 
-	qgrpc "github.com/lnsp/grpc-quic"
-	"github.com/willf/bitset"
+	"github.com/bits-and-blooms/bitset"
 )
 
 // ListPeers contacts a tracker looking for a given hash.
-func ListPeers(hash []byte, addr string) ([]Peer, error) {
-	// Contact tracker for peers
-	tavernConn, err := qgrpc.Dial(addr, opts.WithInsecure(), opts.WithTimeout(time.Minute), opts.WithBackoffMaxDelay(time.Minute))
-	if err != nil {
-		return nil, fmt.Errorf("dial tavern: %v", err)
+func ListPeers(hash []byte, addr string, insecure bool) ([]Peer, error) {
+	httpClient := http3utils.DefaultClient
+	if insecure {
+		httpClient = http3utils.DefaultClientInsecure
 	}
-	defer tavernConn.Close()
-	tavernClient := tavern.NewTavernClient(tavernConn)
+	tavernClient := tavernv1connect.NewTavernServiceClient(httpClient, addr)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	resp, err := tavernClient.List(ctx, &tavern.ListRequest{
+	resp, err := tavernClient.List(ctx, connect.NewRequest(&tavernv1.ListRequest{
 		Hash: hash,
-	})
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("list peers: %v", err)
 	}
-	peers := make([]Peer, len(resp.Peers))
-	for i := range resp.Peers {
+	peers := make([]Peer, len(resp.Msg.Peers))
+	for i := range resp.Msg.Peers {
+		// Generate HTTP client for Peer
+		httpClient, err := http3utils.TrustedClient(resp.Msg.Peers[i].PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("create client for peer: %w", err)
+		}
+		peerClient := seederv1connect.NewSeederServiceClient(httpClient, resp.Msg.Peers[i].Addr)
 		peers[i] = Peer{
-			Address: resp.Peers[i].Addr,
+			Address: resp.Msg.Peers[i].Addr,
 			Hash:    hash,
+			Client:  peerClient,
 		}
 	}
 	return peers, nil
 }
 
 // HasChunks fetches the set of chunks served by the peer.
-func HasChunks(hash []byte, peer string) (*bitset.BitSet, error) {
-	peerConn, err := qgrpc.Dial(peer, opts.WithInsecure(), opts.WithTimeout(time.Minute), opts.WithBackoffMaxDelay(time.Minute))
-	if err != nil {
-		return nil, fmt.Errorf("dial peer: %v", err)
-	}
-	defer peerConn.Close()
-	peerClient := seeder.NewSeederClient(peerConn)
+func (peer *Peer) HasChunks(hash []byte) (*bitset.BitSet, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	resp, err := peerClient.Has(ctx, &seeder.HasRequest{
+	resp, err := peer.Client.Has(ctx, connect.NewRequest(&seederv1.HasRequest{
 		Hash: hash,
-	})
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("seeder has: %v", err)
 	}
-	return bitset.From(resp.Chunks), nil
+	return bitset.From(resp.Msg.Chunks), nil
 }
 
 type Peer struct {
 	Address  string
 	Hash     []byte
 	Chunkset *bitset.BitSet
+	Client   seederv1connect.SeederServiceClient
 }
 
 func (peer *Peer) Refresh() {
-	chunkset, err := HasChunks(peer.Hash, peer.Address)
+	chunkset, err := peer.HasChunks(peer.Hash)
 	if err != nil {
 		log.Printf("fetch chunkset from peer %s: %v", peer.Address, err)
 		peer.Chunkset = bitset.New(0)
@@ -99,7 +100,7 @@ func (peer *Peer) Refresh() {
 
 type Task struct {
 	Fetched     chan int64
-	Tracker     *tracker.Tracker
+	Tracker     *trackerv1.Tracker
 	Peers       []Peer
 	Peer        int
 	Hash        []byte
@@ -109,27 +110,22 @@ type Task struct {
 }
 
 func (task Task) Fetch() error {
-	peerConn, err := qgrpc.Dial(task.Peers[task.Peer].Address, opts.WithInsecure(), opts.WithTimeout(time.Minute), opts.WithBackoffMaxDelay(time.Minute))
-	if err != nil {
-		return fmt.Errorf("dial peer: %v", err)
-	}
-	defer peerConn.Close()
-	peerClient := seeder.NewSeederClient(peerConn)
+	// Use client from pool
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	resp, err := peerClient.Fetch(ctx, &seeder.FetchRequest{
+	resp, err := task.Peers[task.Peer].Client.Fetch(ctx, connect.NewRequest(&seederv1.FetchRequest{
 		Hash:  task.Hash,
 		Chunk: task.Chunk,
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("seeder fetch: %v", err)
 	}
 	hasher := sha256.New()
-	hasher.Write(resp.Data)
+	hasher.Write(resp.Msg.Data)
 	if !bytes.Equal(hasher.Sum(nil), task.ChunkHash) {
 		return fmt.Errorf("bad chunk from peer")
 	}
-	if err := ioutil.WriteFile(task.Destination, resp.Data, 0644); err != nil {
+	if err := os.WriteFile(task.Destination, resp.Msg.Data, 0644); err != nil {
 		return fmt.Errorf("chunk write: %v", err)
 	}
 	return nil
@@ -148,7 +144,7 @@ func randomIntOrder(n int) []int {
 	return order
 }
 
-func fetchWorker(tasks chan Task) {
+func fetchWorker(tasks chan Task, insecure bool) {
 	for task := range tasks {
 		chunk := uint(task.Chunk)
 		fetched := false
@@ -179,7 +175,7 @@ func fetchWorker(tasks chan Task) {
 				backoff := time.Second * time.Duration(math.Min(60.0, math.Pow(1.3, float64(cycle))))
 				time.Sleep(backoff)
 				// To resolve worker cycle, re-fetch peers and chunksets
-				peers, err := Resolve(task.Tracker)
+				peers, err := Resolve(task.Tracker, insecure)
 				if err != nil {
 					log.Printf("resolve after cycle: %v", err)
 				} else {
@@ -193,7 +189,7 @@ func fetchWorker(tasks chan Task) {
 }
 
 func readAndVerify(path string, hash []byte) ([]byte, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read and verify: %w", err)
 	}
@@ -207,8 +203,8 @@ func readAndVerify(path string, hash []byte) ([]byte, error) {
 }
 
 // Resolve fetches a list of serving peer from the tracker.
-func Resolve(tracker *tracker.Tracker) ([]Peer, error) {
-	peers, err := ListPeers(tracker.Hash, tracker.Addr)
+func Resolve(tracker *trackerv1.Tracker, insecure bool) ([]Peer, error) {
+	peers, err := ListPeers(tracker.Hash, tracker.Addr, insecure)
 	if err != nil {
 		return nil, fmt.Errorf("list peers: %v", err)
 	}
@@ -220,15 +216,15 @@ func Resolve(tracker *tracker.Tracker) ([]Peer, error) {
 }
 
 // Fetch downloads a file to the given destination.
-func Fetch(path string, tracker *tracker.Tracker, numWorkers int) error {
-	peers, err := Resolve(tracker)
+func Fetch(path string, tracker *trackerv1.Tracker, numWorkers int, insecure bool) error {
+	peers, err := Resolve(tracker, insecure)
 	if err != nil {
 		return fmt.Errorf("resolve peers: %v", err)
 	}
 	// Spawn workers
 	tasks := make(chan Task)
 	for i := 0; i < numWorkers; i++ {
-		go fetchWorker(tasks)
+		go fetchWorker(tasks, insecure)
 	}
 	// Track fetch progress
 	numFetched, numChunks := 0, len(tracker.ChunkHashes)

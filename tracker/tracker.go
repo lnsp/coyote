@@ -22,16 +22,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/golang/protobuf/proto"
+	trackerv1 "github.com/lnsp/ftp2p/gen/tracker/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // Open opens a tracker file, decodes it and returns its contents.
-func Open(name string) (*Tracker, error) {
+func Open(name string) (*trackerv1.Tracker, error) {
 	trackfile, err := ioutil.ReadFile(name)
 	if err != nil {
 		return nil, fmt.Errorf("open tracker: %v", err)
 	}
-	var tracker Tracker
+	var tracker trackerv1.Tracker
 	if err := proto.Unmarshal(trackfile, &tracker); err != nil {
 		return nil, fmt.Errorf("decode tracker: %v", err)
 	}
@@ -39,7 +40,7 @@ func Open(name string) (*Tracker, error) {
 }
 
 // Save stores a tracker structure on disk.
-func Save(tracker *Tracker, name string) error {
+func Save(tracker *trackerv1.Tracker, name string) error {
 	trackfile, err := proto.Marshal(tracker)
 	if err != nil {
 		return fmt.Errorf("encode tracker: %v", err)
@@ -54,7 +55,7 @@ const MinChunkCount int64 = 8
 const MaxChunkSize int64 = 2 << 16
 
 // Track generates a new tracker file that is ready for seeding.
-func Track(addr string, path string) (*Tracker, error) {
+func Track(addr string, path string) (*trackerv1.Tracker, error) {
 	// Check if path is folder or does not exist or something
 	fstat, err := os.Stat(path)
 	if err != nil {
@@ -94,7 +95,7 @@ func Track(addr string, path string) (*Tracker, error) {
 		hash.Write(chunk[:size])
 		hashes[index] = chunkHash.Sum(nil)
 	}
-	return &Tracker{
+	return &trackerv1.Tracker{
 		Addr:        addr,
 		Hash:        fileHash.Sum(nil),
 		Name:        filepath.Base(path),

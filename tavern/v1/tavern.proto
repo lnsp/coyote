@@ -14,26 +14,35 @@
 
 syntax = "proto3";
 
-package seeder;
+package tavern.v1;
 
-service Seeder {
-    rpc Has(HasRequest) returns (HasResponse) {}
-    rpc Fetch(FetchRequest) returns (FetchResponse) {}
+option go_package = "github.com/lnsp/ftp2p/gen/tavern/v1;tavernv1";
+
+service TavernService {
+    rpc List(ListRequest) returns (ListResponse) {}
+    rpc Announce(AnnounceRequest) returns (AnnounceResponse) {}
 }
 
-message HasRequest  {
+message Peer {
+    string addr = 1;
+    bytes public_key = 2;
+}
+
+message ListRequest {
     bytes hash = 1;
 }
 
-message HasResponse {
-    repeated uint64 chunks = 1;
+message ListResponse {
+    repeated Peer peers = 1;
+    int64 interval = 2;
 }
 
-message FetchRequest {
+message AnnounceRequest {
     bytes hash = 1;
-    int64 chunk = 2;
+    string addr = 2;
+    bytes public_key = 3;
 }
 
-message FetchResponse {
-    bytes data = 1;
+message AnnounceResponse {
+    int64 interval = 1;
 }

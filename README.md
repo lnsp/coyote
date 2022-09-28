@@ -1,6 +1,6 @@
 # ftp2p
 
-Simple peer-to-peer file transfer protocol inspired by the BitTorrent protocol, but instead of custom TCP protocols everything is built on top of gRPC (and therefore can be protected by TLS easily).
+Simple peer-to-peer file transfer protocol inspired by the BitTorrent protocol, but instead of custom TCP protocols everything is built on top of QUIC (and therefore can be protected by TLS easily).
 
 ## How does it work?
 
@@ -12,7 +12,7 @@ There are three types of actors in a functioning `ftp2p` environment. First of a
 * [x] Announcement timeouts
 * [x] Better chunk download scheduling
 * [x] Add support to resume fetches by checking for already downloaded chunks (and verifying them)
-* [x] Use UDP-based QUIC as transport layer for gRPC (with this comes UDP hole punching)
+* [x] Use UDP-based QUIC as transport layer with Buf Connect on top of it (with this comes UDP hole punching)
 * [ ] Encryption of tavern traffic using Let's Encrypt certificates
 * [ ] Use distributed hash tables for decentralized peer discovery
 * [ ] Split `.tracker` into public- and private trackers, allowing for file encryption

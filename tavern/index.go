@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/emirpasic/gods/maps/treemap"
+	tavernv1 "github.com/lnsp/ftp2p/gen/tavern/v1"
 )
 
 type PeerEntry struct {
-	Peer      *Peer
+	Peer      *tavernv1.Peer
 	Timestamp time.Time
 }
 
@@ -49,7 +50,7 @@ func (index *PeerIndex) Clean(hash []byte, timeout int64) {
 	index.treemap.Put(hash, entries[n:])
 }
 
-func (index *PeerIndex) Seed(hash []byte, peer *Peer) {
+func (index *PeerIndex) Seed(hash []byte, peer *tavernv1.Peer) {
 	index.Lock()
 	value, ok := index.treemap.Get(hash)
 	var entries []PeerEntry

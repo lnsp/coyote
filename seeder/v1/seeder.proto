@@ -12,15 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-syntax = 'proto3';
+syntax = "proto3";
 
-package tracker;
+package seeder.v1;
 
-message Tracker {
-    string addr = 1;
-    bytes hash = 2;
-    string name = 3;
-    int64 size = 4;
-    int64 chunkSize = 5;
-    repeated bytes chunkHashes = 6;
+option go_package = "github.com/lnsp/ftp2p/gen/seeder/v1;seederv1";
+
+service SeederService {
+    rpc Has(HasRequest) returns (HasResponse) {}
+    rpc Fetch(FetchRequest) returns (FetchResponse) {}
+}
+
+message HasRequest  {
+    bytes hash = 1;
+}
+
+message HasResponse {
+    repeated uint64 chunks = 1;
+}
+
+message FetchRequest {
+    bytes hash = 1;
+    int64 chunk = 2;
+}
+
+message FetchResponse {
+    bytes data = 1;
 }

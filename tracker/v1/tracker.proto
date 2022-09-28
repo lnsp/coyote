@@ -12,33 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-syntax = "proto3";
+syntax = 'proto3';
 
-package tavern;
+package tracker.v1;
 
-service Tavern {
-    rpc List(ListRequest) returns (ListResponse) {}
-    rpc Announce(AnnounceRequest) returns (AnnounceResponse) {}
-}
+option go_package = "github.com/lnsp/ftp2p/gen/tracker/v1;trackerv1";
 
-message Peer {
+message Tracker {
     string addr = 1;
-}
-
-message ListResponse {
-    repeated Peer peers = 1;
-    int64 interval = 2;
-}
-
-message ListRequest {
-    bytes hash = 1;
-}
-
-message AnnounceRequest {
-    bytes hash = 1;
-    string addr = 2;
-}
-
-message AnnounceResponse {
-    int64 interval = 1;
+    bytes hash = 2;
+    string name = 3;
+    int64 size = 4;
+    int64 chunk_size = 5;
+    repeated bytes chunk_hashes = 6;
 }
