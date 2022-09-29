@@ -7,27 +7,30 @@ import (
 )
 
 var (
-	trackInput   string
-	trackTracker string
-	trackTavern  string
+	trackOutput  string
+	trackTaverns []string
 )
 
 var trackCmd = &cobra.Command{
-	Use:   "track",
+	Use:   "track [file]",
 	Short: "Create a file tracker with a specified host tavern",
-	Args:  cobra.NoArgs,
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		t, err := tracker.Track(trackTavern, trackInput)
+		trackPath := args[0]
+		if len(trackOutput) == 0 {
+			trackOutput = trackPath + ".ftp2p"
+		}
+		// Use progress bar to track updates
+		t, err := tracker.Track(trackTaverns, trackPath)
 		if err != nil {
 			return err
 		}
-		return tracker.Save(t, trackTracker)
+		return tracker.Save(t, trackOutput)
 	},
 }
 
 func init() {
-	trackCmd.Flags().StringVarP(&trackInput, "input", "i", "input", "Input file to track")
-	trackCmd.Flags().StringVarP(&trackTavern, "tavern", "s", "https://localhost:6443", "Tavern host which serves the peer sessions")
-	trackCmd.Flags().StringVarP(&trackTracker, "tracker", "t", "tracker", "Tracker file")
+	trackCmd.Flags().StringArrayVarP(&trackTaverns, "taverns", "s", []string{"https://localhost:6443"}, "Tavern hosts which serves the peer sessions")
+	trackCmd.Flags().StringVarP(&trackOutput, "output", "o", "", "Where to put the Tracker")
 	rootCmd.AddCommand(trackCmd)
 }

@@ -19,7 +19,7 @@ package tracker.v1;
 option go_package = "github.com/lnsp/ftp2p/gen/tracker/v1;trackerv1";
 
 message Tracker {
-    string addr = 1;
+    repeated string taverns = 1;
     bytes hash = 2;
     string name = 3;
     int64 size = 4;

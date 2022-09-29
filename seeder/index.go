@@ -8,7 +8,6 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/emirpasic/gods/maps/treemap"
 	trackerv1 "github.com/lnsp/ftp2p/gen/tracker/v1"
-	"github.com/lnsp/ftp2p/tracker"
 )
 
 func byteSliceComparator(a, b interface{}) int {
@@ -34,7 +33,7 @@ func (index *FileIndex) Scan(hash []byte) *bitset.BitSet {
 	if !ok {
 		return bitset.New(0)
 	}
-	chunks := bitset.New(uint(tracker.MinChunkCount))
+	chunks := &bitset.BitSet{}
 	entries := value.([]*FileEntry)
 	for _, e := range entries {
 		chunks.Set(uint(e.Chunk))

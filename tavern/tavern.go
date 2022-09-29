@@ -49,13 +49,18 @@ func (tavern *Tavern) List(ctx context.Context, req *connect.Request[tavernv1.Li
 	if !ok {
 		return nil, status.Error(codes.NotFound, "hash not found")
 	}
-	peers := make([]*tavernv1.Peer, len(entries))
+	matched := map[string]int{}
+	peers := []*tavernv1.Peer{}
 	expired := false
-	for i, e := range entries {
-		if e.Timestamp.Add(time.Duration(tavern.AnnounceInterval) * time.Second).Before(time.Now()) {
+	for i, entry := range entries {
+		if entry.Timestamp.Add(time.Duration(tavern.AnnounceInterval) * time.Second).Before(time.Now()) {
 			expired = true
+		} else if j, ok := matched[entry.Peer.Addr]; ok {
+			peers[j] = entry.Peer
+		} else {
+			peers = append(peers, entry.Peer)
+			matched[entry.Peer.Addr] = i
 		}
-		peers[i] = e.Peer
 	}
 	if expired {
 		tavern.scheduleForCleanup(req.Msg.Hash, 0)

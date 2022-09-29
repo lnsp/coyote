@@ -19,7 +19,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
-	fmt "fmt"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -105,61 +105,70 @@ func (seeder *Seeder) Fetch(ctx context.Context, req *connect.Request[seederv1.F
 	}), nil
 }
 
-func (seeder *Seeder) Announce(tracker *trackerv1.Tracker) (int64, error) {
+const minAnnounceBackoff = time.Minute
+
+func (seeder *Seeder) Announce(ctx context.Context, tracker *trackerv1.Tracker, addr string) error {
 	httpClient := http3utils.DefaultClient
 	if seeder.Insecure {
 		httpClient = http3utils.DefaultClientInsecure
 	}
-	client := tavernv1connect.NewTavernServiceClient(httpClient, tracker.Addr)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	// Submit hash, seeder address and certificate to tavern
+	client := tavernv1connect.NewTavernServiceClient(httpClient, addr)
 	// First, we need to parse our local certificate
 	if len(seeder.tlsConfig.Certificates) > 1 || len(seeder.tlsConfig.Certificates[0].Certificate) > 1 {
-		return 0, fmt.Errorf("can only handle single certificate")
+		return fmt.Errorf("can only handle single seeder certificate")
 	}
 	certificate, err := x509.ParseCertificate(seeder.tlsConfig.Certificates[0].Certificate[0])
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse seeder certificate")
+		return fmt.Errorf("failed to parse seeder certificate")
 	}
 	publicKey, err := x509.MarshalPKIXPublicKey(certificate.PublicKey)
 	if err != nil {
-		return 0, fmt.Errorf("failed to marshal seeder public key")
+		return fmt.Errorf("failed to marshal seeder public key")
 	}
-	resp, err := client.Announce(ctx, connect.NewRequest(&tavernv1.AnnounceRequest{
-		Hash:      tracker.Hash,
-		Addr:      "https://" + seeder.Addr,
-		PublicKey: publicKey,
-	}))
-	if err != nil {
-		return 0, fmt.Errorf("announce to tavern: %v", err)
+
+	sleep := minAnnounceBackoff
+	timer := time.NewTimer(0)
+	for {
+		// Submit hash, seeder address and certificate to tavern
+		resp, err := client.Announce(ctx, connect.NewRequest(&tavernv1.AnnounceRequest{
+			Hash:      tracker.Hash,
+			Addr:      "https://" + seeder.Addr,
+			PublicKey: publicKey,
+		}))
+		if err != nil {
+			log.Printf("Announce to Tavern %s: %v", addr, err)
+			sleep = minAnnounceBackoff
+		} else {
+			sleep = time.Duration(resp.Msg.Interval) * time.Second
+		}
+		// Reset announcement timer
+		timer.Reset(sleep)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return nil
+		}
 	}
-	return resp.Msg.Interval, nil
 }
 
-func (seeder *Seeder) Seed(path string, tracker *trackerv1.Tracker) error {
+// Seed verifies that the given tracker matches the file at the path and begins announcing seeding capacities
+// to the taverns listed in the tracker. All background routines keep running until the context is canceled.
+func (seeder *Seeder) Seed(ctx context.Context, path string, tracker *trackerv1.Tracker) error {
 	// Verify hash for tracker
 	if err := hash.Verify(path, tracker.Hash); err != nil {
 		return fmt.Errorf("verify path: %w", err)
 	}
 	log.Printf("Add tracker %s for %s", hex.EncodeToString(tracker.Hash), path)
 	seeder.index.Add(path, tracker)
-	go func() {
+	// Start announcing to each Tavern mentioned in the Tracker
+	for _, addr := range tracker.Taverns {
 		// Announce to tavern
-		for {
-			interval, err := seeder.Announce(tracker)
-			if err != nil {
-				log.Printf("Announce to tavern: %v", err)
-				time.Sleep(time.Minute)
-			} else {
-				time.Sleep(time.Duration(interval) * time.Second)
-			}
-		}
-	}()
+		go seeder.Announce(ctx, tracker, addr)
+	}
 	return nil
 }
 
-func (seeder *Seeder) ListenAndServe() error {
+func (seeder *Seeder) ListenAndServe(ctx context.Context) error {
 	// Set up handler and mux
 	path, handler := seederv1connect.NewSeederServiceHandler(seeder)
 	mux := http.NewServeMux()
@@ -171,6 +180,7 @@ func (seeder *Seeder) ListenAndServe() error {
 		TLSConfig: seeder.tlsConfig,
 		Handler:   handler,
 	}
+	go func() { <-ctx.Done(); server.Close() }()
 	return server.ListenAndServe()
 }
 

@@ -16,19 +16,19 @@ package tracker
 
 import (
 	"crypto/sha256"
-	fmt "fmt"
+	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
 	trackerv1 "github.com/lnsp/ftp2p/gen/tracker/v1"
+	"github.com/schollz/progressbar"
 	"google.golang.org/protobuf/proto"
 )
 
 // Open opens a tracker file, decodes it and returns its contents.
 func Open(name string) (*trackerv1.Tracker, error) {
-	trackfile, err := ioutil.ReadFile(name)
+	trackfile, err := os.ReadFile(name)
 	if err != nil {
 		return nil, fmt.Errorf("open tracker: %v", err)
 	}
@@ -45,62 +45,68 @@ func Save(tracker *trackerv1.Tracker, name string) error {
 	if err != nil {
 		return fmt.Errorf("encode tracker: %v", err)
 	}
-	if err := ioutil.WriteFile(name, trackfile, 0644); err != nil {
+	if err := os.WriteFile(name, trackfile, 0644); err != nil {
 		return fmt.Errorf("write tracker: %v", err)
 	}
 	return nil
 }
 
-const MinChunkCount int64 = 8
-const MaxChunkSize int64 = 2 << 16
+const minChunkCount int64 = 8
+const maxChunkSize int64 = 1 << 24
 
 // Track generates a new tracker file that is ready for seeding.
-func Track(addr string, path string) (*trackerv1.Tracker, error) {
+func Track(taverns []string, path string) (*trackerv1.Tracker, error) {
 	// Check if path is folder or does not exist or something
-	fstat, err := os.Stat(path)
+	stat, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("stat seedfile: %v", err)
-	} else if fstat.IsDir() {
+	} else if stat.IsDir() {
 		return nil, fmt.Errorf("seedfile can not be directory")
 	}
 	// Generate tracker structure
 	// Optimize chunk size, we want to have at least 8 chunks with max size 64KiB
-	fileSize := fstat.Size()
-	chunkSize := MaxChunkSize
-	chunkCount := fileSize / chunkSize
-	if chunkCount < MinChunkCount {
-		chunkCount = MinChunkCount
-		chunkSize = fileSize / chunkCount
+	filesize := stat.Size()
+	chunksize := maxChunkSize
+	chunkcount := filesize / chunksize
+	// Print out track chunksize and chunkcount
+	if chunkcount < minChunkCount {
+		chunkcount = minChunkCount
+		chunksize = filesize / chunkcount
 	}
 	// Scan through file, do chunk hashes
-	fileHash, chunkHash := sha256.New(), sha256.New()
-	hash := io.MultiWriter(fileHash, chunkHash)
-	hashes := make([][]byte, chunkCount)
+	filehash, chunkhash := sha256.New(), sha256.New()
+	hashwriter := io.MultiWriter(filehash, chunkhash)
+	chunkhashes := make([][]byte, chunkcount)
 	seedfile, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open seedfile: %v", err)
 	}
 	defer seedfile.Close()
-	chunk := make([]byte, fileSize-(chunkCount-1)*chunkSize)
-	for index := int64(0); index < chunkCount; index++ {
-		size := chunkSize
-		if index == chunkCount-1 {
-			size = fileSize - (chunkCount-1)*chunkSize
+	chunk := make([]byte, filesize-(chunkcount-1)*chunksize)
+	// Start progress bar for nice visuals
+	pb := progressbar.New(int(chunkcount))
+	for index := int64(0); index < chunkcount; index++ {
+		size := chunksize
+		if index == chunkcount-1 {
+			size = filesize - (chunkcount-1)*chunksize
 		}
 		_, err := seedfile.Read(chunk[:size])
 		if err != nil {
 			return nil, fmt.Errorf("scan seedfile: %v", err)
 		}
-		chunkHash.Reset()
-		hash.Write(chunk[:size])
-		hashes[index] = chunkHash.Sum(nil)
+		chunkhash.Reset()
+		hashwriter.Write(chunk[:size])
+		chunkhashes[index] = chunkhash.Sum(nil)
+
+		// Update progress bar
+		pb.Add(1)
 	}
 	return &trackerv1.Tracker{
-		Addr:        addr,
-		Hash:        fileHash.Sum(nil),
+		Taverns:     taverns,
+		Hash:        filehash.Sum(nil),
 		Name:        filepath.Base(path),
-		Size:        fileSize,
-		ChunkSize:   chunkSize,
-		ChunkHashes: hashes,
+		Size:        filesize,
+		ChunkSize:   chunksize,
+		ChunkHashes: chunkhashes,
 	}, nil
 }

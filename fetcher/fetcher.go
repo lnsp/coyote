@@ -22,6 +22,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"net/http"
 	"os"
 	"time"
 
@@ -34,16 +35,12 @@ import (
 	"github.com/lnsp/ftp2p/http3utils"
 
 	"github.com/bits-and-blooms/bitset"
-	"github.com/schollz/progressbar"
+	"github.com/schollz/progressbar/v3"
 )
 
 // ListPeers contacts a tracker looking for a given hash.
-func ListPeers(hash []byte, addr string, insecure bool) ([]Peer, error) {
-	httpClient := http3utils.DefaultClient
-	if insecure {
-		httpClient = http3utils.DefaultClientInsecure
-	}
-	tavernClient := tavernv1connect.NewTavernServiceClient(httpClient, addr)
+func (fetcher *Fetcher) ListPeers(hash []byte, addr string) ([]Peer, error) {
+	tavernClient := tavernv1connect.NewTavernServiceClient(fetcher.httpClient, addr)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	resp, err := tavernClient.List(ctx, connect.NewRequest(&tavernv1.ListRequest{
@@ -110,7 +107,7 @@ type Task struct {
 	Destination string
 }
 
-func (task Task) Fetch() error {
+func (task Task) Fetch() (int64, error) {
 	// Use client from pool
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -119,17 +116,17 @@ func (task Task) Fetch() error {
 		Chunk: task.Chunk,
 	}))
 	if err != nil {
-		return fmt.Errorf("seeder fetch: %v", err)
+		return -1, fmt.Errorf("seeder fetch: %v", err)
 	}
 	hasher := sha256.New()
 	hasher.Write(resp.Msg.Data)
 	if !bytes.Equal(hasher.Sum(nil), task.ChunkHash) {
-		return fmt.Errorf("bad chunk from peer")
+		return -1, fmt.Errorf("bad chunk from peer")
 	}
 	if err := os.WriteFile(task.Destination, resp.Msg.Data, 0644); err != nil {
-		return fmt.Errorf("chunk write: %v", err)
+		return -1, fmt.Errorf("chunk write: %v", err)
 	}
-	return nil
+	return int64(len(resp.Msg.Data)), nil
 }
 
 func generateChunkPath(basepath string, i int) string {
@@ -145,38 +142,40 @@ func randomIntOrder(n int) []int {
 	return order
 }
 
-func fetchWorker(tasks chan Task, insecure bool) {
+func (fetcher *Fetcher) handleFetchTasks(tasks chan Task) {
 	for task := range tasks {
 		chunk := uint(task.Chunk)
-		fetched := false
+		fetched := int64(-1)
 		// Check for local correct copy
-		if _, err := readAndVerify(task.Destination, task.ChunkHash); err == nil {
-			fetched = true
+		if data, err := readAndVerify(task.Destination, task.ChunkHash); err == nil {
+			fetched = int64(len(data))
 		}
 		// If not exist, try to fetch
-		for cycle := 0; !fetched; cycle++ {
+		for cycle := 0; fetched < 0; cycle++ {
 			// To load balance, generate random peer order per cycle
 			order := randomIntOrder(len(task.Peers))
-			for i := 0; i < len(task.Peers) && !fetched; i++ {
+			for i := 0; i < len(task.Peers) && fetched < 0; i++ {
 				j := order[i]
 				if !task.Peers[j].Chunkset.Test(chunk) {
 					log.Printf("peer %s does not have chunk %d", task.Peers[j].Address, chunk)
 					continue
 				}
 				task.Peer = j
-				if err := task.Fetch(); err != nil {
+				n, err := task.Fetch()
+				if err != nil {
 					log.Printf("fetch chunk %d from peer %s failed: %v", chunk, task.Peers[j].Address, err)
 					continue
 				}
-				fetched = true
+				fetched = n
 			}
-			if !fetched {
+			// If fetched is still -1, we need to re-fetch the peer list
+			if fetched < 0 {
 				log.Printf("worker cycled for chunk %d in iteration %d", chunk, cycle)
 				// Do exponential backoff, reaches max around 16 cycles
 				backoff := time.Second * time.Duration(math.Min(60.0, math.Pow(1.3, float64(cycle))))
 				time.Sleep(backoff)
 				// To resolve worker cycle, re-fetch peers and chunksets
-				peers, err := Resolve(task.Tracker, insecure)
+				peers, err := fetcher.Resolve(task.Tracker)
 				if err != nil {
 					log.Printf("resolve after cycle: %v", err)
 				} else {
@@ -185,7 +184,7 @@ func fetchWorker(tasks chan Task, insecure bool) {
 			}
 		}
 		// Submit success
-		task.Fetched <- task.Chunk
+		task.Fetched <- fetched
 	}
 }
 
@@ -203,11 +202,33 @@ func readAndVerify(path string, hash []byte) ([]byte, error) {
 	return data, nil
 }
 
+type Fetcher struct {
+	maxConns   int
+	httpClient *http.Client
+}
+
+func New(maxConcurrentConnections int, allowInsecureTavern bool) *Fetcher {
+	fetcher := &Fetcher{
+		maxConns: maxConcurrentConnections,
+	}
+	if allowInsecureTavern {
+		fetcher.httpClient = http3utils.DefaultClientInsecure
+	} else {
+		fetcher.httpClient = http3utils.DefaultClient
+	}
+	return fetcher
+}
+
 // Resolve fetches a list of serving peer from the tracker.
-func Resolve(tracker *trackerv1.Tracker, insecure bool) ([]Peer, error) {
-	peers, err := ListPeers(tracker.Hash, tracker.Addr, insecure)
-	if err != nil {
-		return nil, fmt.Errorf("list peers: %v", err)
+func (fetcher *Fetcher) Resolve(tracker *trackerv1.Tracker) ([]Peer, error) {
+	// Attempt to collect all peers from all trackers
+	peers := []Peer{}
+	for _, tavern := range tracker.Taverns {
+		tavernPeers, err := fetcher.ListPeers(tracker.Hash, tavern)
+		if err != nil {
+			return nil, fmt.Errorf("list peers: %v", err)
+		}
+		peers = append(peers, tavernPeers...)
 	}
 	// And update peer chunksets
 	for i := range peers {
@@ -217,27 +238,24 @@ func Resolve(tracker *trackerv1.Tracker, insecure bool) ([]Peer, error) {
 }
 
 // Fetch downloads a file to the given destination.
-func Fetch(path string, tracker *trackerv1.Tracker, numWorkers int, insecure bool) error {
-	peers, err := Resolve(tracker, insecure)
+func (fetcher *Fetcher) Fetch(path string, tracker *trackerv1.Tracker) error {
+	peers, err := fetcher.Resolve(tracker)
 	if err != nil {
 		return fmt.Errorf("resolve peers: %v", err)
 	}
 	// Spawn workers
 	tasks := make(chan Task)
-	for i := 0; i < numWorkers; i++ {
-		go fetchWorker(tasks, insecure)
+	for i := 0; i < fetcher.maxConns; i++ {
+		go fetcher.handleFetchTasks(tasks)
 	}
 	// Track fetch progress
-	numFetched, numChunks := 0, len(tracker.ChunkHashes)
 	fetched := make(chan int64, 1)
 	done := make(chan bool)
 	// Show progress in terminal
-	progress := progressbar.New(numChunks)
+	progress := progressbar.DefaultBytes(tracker.Size, "Fetching chunks from peers")
 	go func() {
-		for numFetched < numChunks {
-			<-fetched
-			numFetched++
-			progress.Add(1)
+		for !progress.IsFinished() {
+			progress.Add64(<-fetched)
 		}
 		done <- true
 	}()
@@ -258,7 +276,9 @@ func Fetch(path string, tracker *trackerv1.Tracker, numWorkers int, insecure boo
 	close(done)
 	close(tasks)
 	close(fetched)
+	progress.Finish()
 	// Stick chunks together
+	progress = progressbar.DefaultBytes(tracker.Size, "Sticking chunks together")
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create final file: %v", err)
@@ -273,6 +293,8 @@ func Fetch(path string, tracker *trackerv1.Tracker, numWorkers int, insecure boo
 			if _, err := file.Write(chunk); err != nil {
 				return err
 			}
+			// Update progressbar
+			progress.Add64(int64(len(chunk)))
 			return nil
 		}(); err != nil {
 			return fmt.Errorf("final assembly: %v", err)
