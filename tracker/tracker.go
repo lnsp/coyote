@@ -21,7 +21,7 @@ import (
 	"os"
 	"path/filepath"
 
-	trackerv1 "github.com/lnsp/ftp2p/gen/tracker/v1"
+	trackerv1 "github.com/lnsp/coyote/gen/tracker/v1"
 	"github.com/schollz/progressbar"
 	"google.golang.org/protobuf/proto"
 )

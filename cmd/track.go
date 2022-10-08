@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/lnsp/ftp2p/tracker"
+	"github.com/lnsp/coyote/tracker"
 
 	"github.com/spf13/cobra"
 )
@@ -18,7 +18,7 @@ var trackCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		trackPath := args[0]
 		if len(trackOutput) == 0 {
-			trackOutput = trackPath + ".ftp2p"
+			trackOutput = trackPath + ".coyote"
 		}
 		// Use progress bar to track updates
 		t, err := tracker.Track(trackTaverns, trackPath)

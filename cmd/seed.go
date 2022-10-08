@@ -7,9 +7,9 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/lnsp/ftp2p/security"
-	"github.com/lnsp/ftp2p/seeder"
-	"github.com/lnsp/ftp2p/tracker"
+	"github.com/lnsp/coyote/security"
+	"github.com/lnsp/coyote/seeder"
+	"github.com/lnsp/coyote/tracker"
 	"golang.org/x/net/context"
 
 	"github.com/spf13/cobra"
@@ -41,7 +41,7 @@ var seedCmd = &cobra.Command{
 		log.Println("Generated new ephemeral TLS certificate")
 		// Use file and tracker path from args
 		path := args[0]
-		trackerpath := path + ".ftp2p"
+		trackerpath := path + ".coyote"
 		if len(args) > 1 {
 			trackerpath = args[1]
 		}

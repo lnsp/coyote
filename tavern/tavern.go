@@ -28,8 +28,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	tavernv1 "github.com/lnsp/ftp2p/gen/tavern/v1"
-	"github.com/lnsp/ftp2p/gen/tavern/v1/tavernv1connect"
+	tavernv1 "github.com/lnsp/coyote/gen/tavern/v1"
+	"github.com/lnsp/coyote/gen/tavern/v1/tavernv1connect"
 )
 
 type Tavern struct {

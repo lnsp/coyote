@@ -4,8 +4,8 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/lnsp/ftp2p/security"
-	"github.com/lnsp/ftp2p/tavern"
+	"github.com/lnsp/coyote/security"
+	"github.com/lnsp/coyote/tavern"
 
 	"github.com/spf13/cobra"
 )

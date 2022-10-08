@@ -16,7 +16,7 @@ syntax = 'proto3';
 
 package tracker.v1;
 
-option go_package = "github.com/lnsp/ftp2p/gen/tracker/v1;trackerv1";
+option go_package = "github.com/lnsp/coyote/gen/tracker/v1;trackerv1";
 
 message Tracker {
     repeated string taverns = 1;

@@ -27,12 +27,12 @@ import (
 	"time"
 
 	"github.com/bufbuild/connect-go"
-	seederv1 "github.com/lnsp/ftp2p/gen/seeder/v1"
-	"github.com/lnsp/ftp2p/gen/seeder/v1/seederv1connect"
-	tavernv1 "github.com/lnsp/ftp2p/gen/tavern/v1"
-	"github.com/lnsp/ftp2p/gen/tavern/v1/tavernv1connect"
-	trackerv1 "github.com/lnsp/ftp2p/gen/tracker/v1"
-	"github.com/lnsp/ftp2p/http3utils"
+	seederv1 "github.com/lnsp/coyote/gen/seeder/v1"
+	"github.com/lnsp/coyote/gen/seeder/v1/seederv1connect"
+	tavernv1 "github.com/lnsp/coyote/gen/tavern/v1"
+	"github.com/lnsp/coyote/gen/tavern/v1/tavernv1connect"
+	trackerv1 "github.com/lnsp/coyote/gen/tracker/v1"
+	"github.com/lnsp/coyote/http3utils"
 
 	"github.com/bits-and-blooms/bitset"
 	"github.com/schollz/progressbar/v3"

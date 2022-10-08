@@ -8,7 +8,7 @@ import (
 	context "context"
 	errors "errors"
 	connect_go "github.com/bufbuild/connect-go"
-	v1 "github.com/lnsp/ftp2p/gen/tavern/v1"
+	v1 "github.com/lnsp/coyote/gen/tavern/v1"
 	http "net/http"
 	strings "strings"
 )

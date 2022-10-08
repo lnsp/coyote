@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package tavern.v1;
 
-option go_package = "github.com/lnsp/ftp2p/gen/tavern/v1;tavernv1";
+option go_package = "github.com/lnsp/coyote/gen/tavern/v1;tavernv1";
 
 service TavernService {
     rpc List(ListRequest) returns (ListResponse) {}

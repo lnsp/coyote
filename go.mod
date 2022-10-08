@@ -1,4 +1,4 @@
-module github.com/lnsp/ftp2p
+module github.com/lnsp/coyote
 
 go 1.19
 

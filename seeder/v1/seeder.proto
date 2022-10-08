@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package seeder.v1;
 
-option go_package = "github.com/lnsp/ftp2p/gen/seeder/v1;seederv1";
+option go_package = "github.com/lnsp/coyote/gen/seeder/v1;seederv1";
 
 service SeederService {
     rpc Has(HasRequest) returns (HasResponse) {}

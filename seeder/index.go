@@ -7,7 +7,7 @@ import (
 
 	"github.com/bits-and-blooms/bitset"
 	"github.com/emirpasic/gods/maps/treemap"
-	trackerv1 "github.com/lnsp/ftp2p/gen/tracker/v1"
+	trackerv1 "github.com/lnsp/coyote/gen/tracker/v1"
 )
 
 func byteSliceComparator(a, b interface{}) int {

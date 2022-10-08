@@ -16,8 +16,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/lnsp/ftp2p/cmd"
 	"os"
+
+	"github.com/lnsp/coyote/cmd"
 )
 
 func main() {

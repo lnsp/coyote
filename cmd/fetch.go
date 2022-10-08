@@ -3,8 +3,8 @@ package cmd
 import (
 	"runtime"
 
-	"github.com/lnsp/ftp2p/fetcher"
-	"github.com/lnsp/ftp2p/tracker"
+	"github.com/lnsp/coyote/fetcher"
+	"github.com/lnsp/coyote/tracker"
 
 	"github.com/spf13/cobra"
 )

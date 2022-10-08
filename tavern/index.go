@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/emirpasic/gods/maps/treemap"
-	tavernv1 "github.com/lnsp/ftp2p/gen/tavern/v1"
+	tavernv1 "github.com/lnsp/coyote/gen/tavern/v1"
 )
 
 type PeerEntry struct {
