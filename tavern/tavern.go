@@ -116,19 +116,22 @@ func (tavern *Tavern) ListenAndServe(addr string, tlsConfig *tls.Config) error {
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	// Setup HTTP2 Server
-	serveHTTP2 := &http.Server{
+	serverHTTP2 := &http.Server{
 		Addr:      addr,
 		TLSConfig: tlsConfig,
 		Handler:   mux,
 	}
-	go serveHTTP2.ListenAndServe()
+	errs := make(chan error, 1)
+	go func() { errs <- serverHTTP2.ListenAndServe() }()
 	// Setup HTTP3 handler
 	serverHTTP3 := &http3.Server{
 		Addr:      addr,
 		TLSConfig: tlsConfig,
 		Handler:   mux,
 	}
-	return serverHTTP3.ListenAndServe()
+	go func() { errs <- serverHTTP3.ListenAndServe() }()
+	// Return first error
+	return <-errs
 }
 
 func New(interval int64) *Tavern {
