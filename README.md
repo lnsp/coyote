@@ -1,4 +1,4 @@
-# coyote
+# <img alt="coyote" src="./docs/coyote.svg" height="60">
 
 Simple peer-to-peer file transfer protocol inspired by the BitTorrent protocol, but instead of custom TCP protocols everything is built on top of QUIC (and therefore can be protected by TLS easily).
 
