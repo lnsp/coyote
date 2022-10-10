@@ -112,6 +112,8 @@ func (tavern *Tavern) cleanupWorker() {
 
 func (tavern *Tavern) ListenAndServe(addr string, tlsConfig *tls.Config) error {
 	path, handler := tavernv1connect.NewTavernServiceHandler(tavern)
+	// Setup error chan
+	errs := make(chan error, 1)
 	// Setup mux
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
@@ -121,7 +123,6 @@ func (tavern *Tavern) ListenAndServe(addr string, tlsConfig *tls.Config) error {
 		TLSConfig: tlsConfig,
 		Handler:   mux,
 	}
-	errs := make(chan error, 1)
 	go func() { errs <- serverHTTP2.ListenAndServe() }()
 	// Setup HTTP3 handler
 	serverHTTP3 := &http3.Server{
@@ -130,7 +131,7 @@ func (tavern *Tavern) ListenAndServe(addr string, tlsConfig *tls.Config) error {
 		Handler:   mux,
 	}
 	go func() { errs <- serverHTTP3.ListenAndServe() }()
-	// Return first error
+	// Return first error caught
 	return <-errs
 }
 
